@@ -13,7 +13,7 @@ try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     model = genai.GenerativeModel('gemini-2.5-flash')
 except KeyError:
-    st.error("Falta la llave de Google en los Secrets.")
+    st.error("Falta la llave de Google en los Secrets de Streamlit.")
     st.stop()
 
 # ==========================================
@@ -23,15 +23,35 @@ st.set_page_config(page_title="TextoListo", page_icon="📝", layout="centered")
 
 st.markdown("""
     <style>
-    .stButton>button { height: 90px; font-size: 26px !important; font-weight: bold; border-radius: 18px; }
+    .stButton>button { height: 90px; font-size: 24px !important; font-weight: bold; border-radius: 18px; }
     .stTextArea textarea { font-size: 24px !important; line-height: 1.6; }
     p, div, label { font-size: 22px !important; }
     h3 { font-size: 28px !important; margin-top: 25px !important; }
     </style>
     """, unsafe_allow_html=True)
 
+# ==========================================
+# SISTEMA DE MEMORIA A PRUEBA DE ERRORES
+# ==========================================
 if "texto_acumulado" not in st.session_state:
     st.session_state.texto_acumulado = ""
+if "historial" not in st.session_state:
+    st.session_state.historial = [] # Aquí guardamos el pasado para poder "Deshacer"
+
+def guardar_pasado():
+    # Guarda una copia de cómo estaba el texto antes de agregar algo nuevo
+    st.session_state.historial.append(st.session_state.texto_acumulado)
+
+def agregar_texto(texto_nuevo):
+    guardar_pasado()
+    if st.session_state.texto_acumulado == "":
+        st.session_state.texto_acumulado = texto_nuevo
+    else:
+        st.session_state.texto_acumulado += f"\n\n{texto_nuevo}"
+
+# Si el usuario edita a mano con el teclado, lo guardamos automáticamente
+def guardar_edicion_manual():
+    st.session_state.texto_acumulado = st.session_state.editor_texto
 
 # ==========================================
 # FUNCIONES DE INTELIGENCIA ARTIFICIAL 
@@ -50,7 +70,7 @@ def procesar_audio(audio_file):
 
 def procesar_pdf(pdf_file):
     pdf_data = {"mime_type": "application/pdf", "data": pdf_file.getvalue()}
-    prompt = "Lee todo este documento PDF. Extrae y resume el texto de forma clara, con viñetas si es necesario. Devuelve SOLO el texto, sin saludos ni explicaciones."
+    prompt = "Lee este documento PDF. Extrae y resume el texto de forma clara. Devuelve SOLO el texto, sin saludos ni explicaciones."
     respuesta = model.generate_content([prompt, pdf_data])
     return respuesta.text
 
@@ -64,10 +84,8 @@ def generar_voz(texto):
 # INTERFAZ PARA EL ADULTO MAYOR
 # ==========================================
 st.title("📝 TextoListo")
-st.write("Convierte tus fotos, documentos PDF o notas de voz en texto limpio.")
-
-st.info("🔒 **Consejo:** No subas fotos ni dictes tarjetas de crédito, contraseñas o datos del banco.")
-
+st.write("Convierte fotos, PDF o audios en texto limpio. **Puedes agregar tantos como necesites.**")
+st.info("🔒 **Consejo:** No subas tarjetas de crédito, contraseñas o datos del banco.")
 st.divider()
 
 # --- SECCIÓN 1: TIEMPO REAL ---
@@ -78,23 +96,23 @@ with col1:
     foto_camara = st.camera_input("📷 Toca para tomar foto")
     if foto_camara:
         with st.spinner("⏳ Leyendo la foto..."):
-            texto_nuevo = procesar_imagen(foto_camara)
-            st.session_state.texto_acumulado += f"\n\n{texto_nuevo}"
-            st.success("¡Foto leída!")
+            texto = procesar_imagen(foto_camara)
+            agregar_texto(texto)
+            st.success("¡Foto agregada al texto!")
 
 with col2:
     audio_grabado = st.audio_input("🎙️ Toca para grabar voz")
     if audio_grabado:
         with st.spinner("⏳ Escuchando tu mensaje..."):
-            texto_nuevo = procesar_audio(audio_grabado)
-            st.session_state.texto_acumulado += f"\n\n{texto_nuevo}"
-            st.success("¡Mensaje escuchado!")
+            texto = procesar_audio(audio_grabado)
+            agregar_texto(texto)
+            st.success("¡Mensaje agregado al texto!")
 
 st.divider()
 
 # --- SECCIÓN 2: SUBIR ARCHIVOS DE WHATSAPP O CORREO ---
 st.subheader("Opción B: Selecciona archivos de tu teléfono")
-st.write("Sube las fotos, PDF o notas de voz que te mandaron por WhatsApp o correo.")
+st.write("Puedes seleccionar varios archivos al mismo tiempo.")
 
 archivos_subidos = st.file_uploader(
     "Toca aquí para buscar en tu teléfono:", 
@@ -103,44 +121,54 @@ archivos_subidos = st.file_uploader(
 )
 
 if archivos_subidos and st.button("✅ PROCESAR ARCHIVOS SELECCIONADOS", type="secondary", use_container_width=True):
-    with st.spinner("⏳ Leyendo tus archivos..."):
+    with st.spinner("⏳ Leyendo tus archivos, no cierres la pantalla..."):
+        textos_nuevos = []
         for archivo in archivos_subidos:
-            tipo_mime = archivo.type
-            
-            if tipo_mime.startswith("image/"):
-                texto_nuevo = procesar_imagen(archivo)
-            elif tipo_mime.startswith("audio/") or tipo_mime in ["audio/ogg", "audio/opus"]:
-                texto_nuevo = procesar_audio(archivo)
-            elif tipo_mime == "application/pdf":
-                texto_nuevo = procesar_pdf(archivo)
-            else:
-                continue 
-                
-            st.session_state.texto_acumulado += f"\n\n{texto_nuevo}"
-        st.success("¡Archivos procesados!")
+            tipo = archivo.type
+            if tipo.startswith("image/"): 
+                textos_nuevos.append(procesar_imagen(archivo))
+            elif tipo.startswith("audio/") or tipo in ["audio/ogg", "audio/opus"]: 
+                textos_nuevos.append(procesar_audio(archivo))
+            elif tipo == "application/pdf": 
+                textos_nuevos.append(procesar_pdf(archivo))
+        
+        # Unimos todo lo que se subió de golpe en un solo bloque
+        if textos_nuevos:
+            texto_unido = "\n\n".join(textos_nuevos)
+            agregar_texto(texto_unido)
+            st.success("¡Archivos procesados y agregados al texto!")
 
 # ==========================================
-# REVISIÓN Y ENVÍO
+# REVISIÓN Y ENVÍO (Con Deshacer)
 # ==========================================
 if st.session_state.texto_acumulado.strip():
     st.divider()
     st.subheader("👀 Paso 3: Revisa tu mensaje")
-    st.write("Si hay un error, toca el cuadro blanco y corrígelo con el teclado.")
     
-    texto_final = st.text_area("Mensaje listo:", value=st.session_state.texto_acumulado.strip(), height=300)
+    # Botón de salvavidas (Solo aparece si hay algo que deshacer en el historial)
+    if len(st.session_state.historial) > 0:
+        if st.button("↩️ Me equivoqué, borrar lo último que agregué"):
+            st.session_state.texto_acumulado = st.session_state.historial.pop()
+            st.rerun()
+
+    st.write("Si hay un error en alguna letra, toca el cuadro blanco y corrígelo con tu teclado.")
+    
+    # Cuadro de texto que guarda cambios manuales automáticamente
+    texto_final = st.text_area("Mensaje listo:", value=st.session_state.texto_acumulado.strip(), height=300, key="editor_texto", on_change=guardar_edicion_manual)
     
     if st.button("🔊 Escuchar en voz alta"):
         st.audio(generar_voz(texto_final), format='audio/mp3', autoplay=True)
 
     st.divider()
     
-    # LA MEJORA APLICADA: Botón universal de WhatsApp
+    # Botón universal de WhatsApp
     mensaje_wpp = urllib.parse.quote(f"Hola, por favor ayúdame a pasar este texto a un Word e imprimirlo:\n\n{texto_final}")
     enlace_wpp = f"https://api.whatsapp.com/send?text={mensaje_wpp}"
     
     st.link_button("✅ ENVIAR POR WHATSAPP", enlace_wpp, type="primary", use_container_width=True)
 
     st.write("---")
-    if st.button("🗑️ Borrar todo y empezar de cero"):
+    if st.button("🗑️ Borrar TODO y empezar de cero"):
         st.session_state.texto_acumulado = ""
+        st.session_state.historial = []
         st.rerun()
