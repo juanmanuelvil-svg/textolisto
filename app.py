@@ -8,7 +8,6 @@ from PIL import Image
 # ==========================================
 # CONFIGURACIÓN INICIAL
 # ==========================================
-# Conexión con Google Gemini
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     model = genai.GenerativeModel('gemini-2.5-flash')
@@ -16,9 +15,6 @@ except KeyError:
     st.error("Falta la llave de Google en los Secrets de Streamlit.")
     st.stop()
 
-# ==========================================
-# CONFIGURACIÓN VISUAL (Letras grandes)
-# ==========================================
 st.set_page_config(page_title="TextoListo", page_icon="📝", layout="centered")
 
 st.markdown("""
@@ -36,10 +32,9 @@ st.markdown("""
 if "texto_acumulado" not in st.session_state:
     st.session_state.texto_acumulado = ""
 if "historial" not in st.session_state:
-    st.session_state.historial = [] # Aquí guardamos el pasado para poder "Deshacer"
+    st.session_state.historial = []
 
 def guardar_pasado():
-    # Guarda una copia de cómo estaba el texto antes de agregar algo nuevo
     st.session_state.historial.append(st.session_state.texto_acumulado)
 
 def agregar_texto(texto_nuevo):
@@ -49,28 +44,33 @@ def agregar_texto(texto_nuevo):
     else:
         st.session_state.texto_acumulado += f"\n\n{texto_nuevo}"
 
-# Si el usuario edita a mano con el teclado, lo guardamos automáticamente
 def guardar_edicion_manual():
     st.session_state.texto_acumulado = st.session_state.editor_texto
 
 # ==========================================
-# FUNCIONES DE INTELIGENCIA ARTIFICIAL 
+# FUNCIONES DE INTELIGENCIA ARTIFICIAL (MEJORADAS PARA TABLAS)
 # ==========================================
 def procesar_imagen(imagen_file):
     img = Image.open(imagen_file)
-    prompt = "Extrae todo el texto de esta imagen de forma clara y limpia. Corrige ortografía. Devuelve SOLO el texto, sin saludos ni explicaciones."
+    # INSTRUCCIÓN MEJORADA PARA TABLAS EN FOTOS
+    prompt = """Extrae todo el texto de esta imagen de forma clara y limpia. Corrige ortografía. 
+    SI ENCUENTRAS TABLAS O CIFRAS: NO uses formato de tabla con rayitas (|). Conviértelas en una lista fácil de leer renglón por renglón (Ejemplo: 'Concepto: X - Total: $Y').
+    Devuelve SOLO el texto, sin saludos ni explicaciones tuyas."""
     respuesta = model.generate_content([prompt, img])
     return respuesta.text
 
 def procesar_audio(audio_file):
     audio_data = {"mime_type": audio_file.type, "data": audio_file.getvalue()}
-    prompt = "Transcribe el siguiente audio. Quita muletillas y corrige la ortografía. Devuelve SOLO el texto, sin saludos ni explicaciones."
+    prompt = "Transcribe el siguiente audio. Quita muletillas y corrige la ortografía. Devuelve SOLO el texto, sin saludos."
     respuesta = model.generate_content([prompt, audio_data])
     return respuesta.text
 
 def procesar_pdf(pdf_file):
     pdf_data = {"mime_type": "application/pdf", "data": pdf_file.getvalue()}
-    prompt = "Lee este documento PDF. Extrae y resume el texto de forma clara. Devuelve SOLO el texto, sin saludos ni explicaciones."
+    # INSTRUCCIÓN MEJORADA PARA TABLAS EN PDF
+    prompt = """Lee este documento PDF. Extrae el texto de forma clara. 
+    SI ENCUENTRAS TABLAS O CIFRAS: NO uses formato de tabla con rayitas (|). Conviértelas en una lista fácil de leer renglón por renglón (Ejemplo: 'Concepto: X - Total: $Y').
+    Devuelve SOLO el texto, sin saludos ni explicaciones tuyas."""
     respuesta = model.generate_content([prompt, pdf_data])
     return respuesta.text
 
@@ -110,7 +110,7 @@ with col2:
 
 st.divider()
 
-# --- SECCIÓN 2: SUBIR ARCHIVOS DE WHATSAPP O CORREO ---
+# --- SECCIÓN 2: SUBIR ARCHIVOS ---
 st.subheader("Opción B: Selecciona archivos de tu teléfono")
 st.write("Puedes seleccionar varios archivos al mismo tiempo.")
 
@@ -132,7 +132,6 @@ if archivos_subidos and st.button("✅ PROCESAR ARCHIVOS SELECCIONADOS", type="s
             elif tipo == "application/pdf": 
                 textos_nuevos.append(procesar_pdf(archivo))
         
-        # Unimos todo lo que se subió de golpe en un solo bloque
         if textos_nuevos:
             texto_unido = "\n\n".join(textos_nuevos)
             agregar_texto(texto_unido)
@@ -145,7 +144,6 @@ if st.session_state.texto_acumulado.strip():
     st.divider()
     st.subheader("👀 Paso 3: Revisa tu mensaje")
     
-    # Botón de salvavidas (Solo aparece si hay algo que deshacer en el historial)
     if len(st.session_state.historial) > 0:
         if st.button("↩️ Me equivoqué, borrar lo último que agregué"):
             st.session_state.texto_acumulado = st.session_state.historial.pop()
@@ -153,7 +151,6 @@ if st.session_state.texto_acumulado.strip():
 
     st.write("Si hay un error en alguna letra, toca el cuadro blanco y corrígelo con tu teclado.")
     
-    # Cuadro de texto que guarda cambios manuales automáticamente
     texto_final = st.text_area("Mensaje listo:", value=st.session_state.texto_acumulado.strip(), height=300, key="editor_texto", on_change=guardar_edicion_manual)
     
     if st.button("🔊 Escuchar en voz alta"):
@@ -161,7 +158,6 @@ if st.session_state.texto_acumulado.strip():
 
     st.divider()
     
-    # Botón universal de WhatsApp
     mensaje_wpp = urllib.parse.quote(f"Hola, por favor ayúdame a pasar este texto a un Word e imprimirlo:\n\n{texto_final}")
     enlace_wpp = f"https://api.whatsapp.com/send?text={mensaje_wpp}"
     
