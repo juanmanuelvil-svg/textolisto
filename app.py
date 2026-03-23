@@ -4,10 +4,12 @@ import urllib.parse
 from gtts import gTTS
 import io
 from PIL import Image
+import os
 
 # ==========================================
 # CONFIGURACIÓN INICIAL
 # ==========================================
+# Conexión con Google Gemini
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     model = genai.GenerativeModel('gemini-2.5-flash')
@@ -23,16 +25,21 @@ st.markdown("""
     .stTextArea textarea { font-size: 24px !important; line-height: 1.6; }
     p, div, label { font-size: 22px !important; }
     h3 { font-size: 28px !important; margin-top: 25px !important; }
+    /* Estilo especial para la advertencia de giro de cámara */
+    .cam-aviso { color: #856404; background-color: #fff3cd; border: 2px solid #ffeeba; border-radius: 10px; padding: 10px; font-weight: bold; text-align: center; }
     </style>
     """, unsafe_allow_html=True)
 
 # ==========================================
-# SISTEMA DE MEMORIA A PRUEBA DE ERRORES
+# SISTEMA DE MEMORIA Y ESTADO
 # ==========================================
 if "texto_acumulado" not in st.session_state:
     st.session_state.texto_acumulado = ""
 if "historial" not in st.session_state:
     st.session_state.historial = []
+# NUEVO: Estado para saber si la cámara está abierta o cerrada
+if "mostrar_camara" not in st.session_state:
+    st.session_state.mostrar_camara = False
 
 def guardar_pasado():
     st.session_state.historial.append(st.session_state.texto_acumulado)
@@ -48,14 +55,13 @@ def guardar_edicion_manual():
     st.session_state.texto_acumulado = st.session_state.editor_texto
 
 # ==========================================
-# FUNCIONES DE INTELIGENCIA ARTIFICIAL (MEJORADAS PARA TABLAS)
+# FUNCIONES DE IA
 # ==========================================
 def procesar_imagen(imagen_file):
     img = Image.open(imagen_file)
-    # INSTRUCCIÓN MEJORADA PARA TABLAS EN FOTOS
     prompt = """Extrae todo el texto de esta imagen de forma clara y limpia. Corrige ortografía. 
     SI ENCUENTRAS TABLAS O CIFRAS: NO uses formato de tabla con rayitas (|). Conviértelas en una lista fácil de leer renglón por renglón (Ejemplo: 'Concepto: X - Total: $Y').
-    Devuelve SOLO el texto, sin saludos ni explicaciones tuyas."""
+    Devuelve SOLO el texto, sin saludos ni explicaciones."""
     respuesta = model.generate_content([prompt, img])
     return respuesta.text
 
@@ -67,10 +73,9 @@ def procesar_audio(audio_file):
 
 def procesar_pdf(pdf_file):
     pdf_data = {"mime_type": "application/pdf", "data": pdf_file.getvalue()}
-    # INSTRUCCIÓN MEJORADA PARA TABLAS EN PDF
     prompt = """Lee este documento PDF. Extrae el texto de forma clara. 
     SI ENCUENTRAS TABLAS O CIFRAS: NO uses formato de tabla con rayitas (|). Conviértelas en una lista fácil de leer renglón por renglón (Ejemplo: 'Concepto: X - Total: $Y').
-    Devuelve SOLO el texto, sin saludos ni explicaciones tuyas."""
+    Devuelve SOLO el texto, sin saludos ni explicaciones."""
     respuesta = model.generate_content([prompt, pdf_data])
     return respuesta.text
 
@@ -84,7 +89,7 @@ def generar_voz(texto):
 # INTERFAZ PARA EL ADULTO MAYOR
 # ==========================================
 st.title("📝 TextoListo")
-st.write("Convierte fotos, PDF o audios en texto limpio. **Puedes agregar tantos como necesites.**")
+st.write("Convierte fotos, PDF o audios en texto limpio.")
 st.info("🔒 **Consejo:** No subas tarjetas de crédito, contraseñas o datos del banco.")
 st.divider()
 
@@ -93,14 +98,37 @@ st.subheader("Opción A: Usa la cámara o micrófono ahora")
 col1, col2 = st.columns(2)
 
 with col1:
-    foto_camara = st.camera_input("📷 Toca para tomar foto")
-    if foto_camara:
-        with st.spinner("⏳ Leyendo la foto..."):
-            texto = procesar_imagen(foto_camara)
-            agregar_texto(texto)
-            st.success("¡Foto agregada al texto!")
+    st.subheader("📷 Paso 1: Foto")
+    
+    # NUEVA LÓGICA MODAL DE CÁMARA
+    # Si la cámara está CERRADA, mostrar botón gigante para ABRIR
+    if not st.session_state.mostrar_camara:
+        st.markdown("Presiona abajo para encender la cámara de tu teléfono.")
+        if st.button("📷 ENCENDER CÁMARA", type="primary", use_container_width=True):
+            st.session_state.mostrar_camara = True
+            st.rerun() # Refresh para mostrar el widget inmediatamente
+
+    # Si la cámara está ABIERTA, mostrar el widget y instrucciones
+    else:
+        st.markdown('<p class="cam-aviso">⚠️ INSTRUCCIÓN:<br>Si te ves a ti mismo (selfie), presiona el botón giratorio de cámara que aparece arriba.</p>', unsafe_allow_html=True)
+        
+        foto_camara = st.camera_input("Enfoca tu documento y presiona abajo")
+        
+        if foto_camara:
+            # Botón adicional para confirmar el procesado, esto le da control al usuario
+            if st.button("✅ USAR ESTA FOTO Y CERRAR CÁMARA", type="primary", use_container_width=True):
+                with st.spinner("⏳ Leyendo la foto..."):
+                    texto = procesar_imagen(foto_camara)
+                    agregar_texto(texto)
+                    st.session_state.mostrar_camara = False # Cierra la cámara
+                    st.rerun()
+
+            if st.button("❌ CANCELAR Y CERRAR CÁMARA", type="secondary", use_container_width=True):
+                 st.session_state.mostrar_camara = False
+                 st.rerun()
 
 with col2:
+    st.subheader("🎙️ Paso 1: Audio")
     audio_grabado = st.audio_input("🎙️ Toca para grabar voz")
     if audio_grabado:
         with st.spinner("⏳ Escuchando tu mensaje..."):
@@ -112,7 +140,7 @@ st.divider()
 
 # --- SECCIÓN 2: SUBIR ARCHIVOS ---
 st.subheader("Opción B: Selecciona archivos de tu teléfono")
-st.write("Puedes seleccionar varios archivos al mismo tiempo.")
+st.write("Sube fotos o PDF que te mandaron por WhatsApp o correo.")
 
 archivos_subidos = st.file_uploader(
     "Toca aquí para buscar en tu teléfono:", 
@@ -121,21 +149,18 @@ archivos_subidos = st.file_uploader(
 )
 
 if archivos_subidos and st.button("✅ PROCESAR ARCHIVOS SELECCIONADOS", type="secondary", use_container_width=True):
-    with st.spinner("⏳ Leyendo tus archivos, no cierres la pantalla..."):
+    with st.spinner("⏳ Leyendo tus archivos..."):
         textos_nuevos = []
         for archivo in archivos_subidos:
             tipo = archivo.type
-            if tipo.startswith("image/"): 
-                textos_nuevos.append(procesar_imagen(archivo))
-            elif tipo.startswith("audio/") or tipo in ["audio/ogg", "audio/opus"]: 
-                textos_nuevos.append(procesar_audio(archivo))
-            elif tipo == "application/pdf": 
-                textos_nuevos.append(procesar_pdf(archivo))
+            if tipo.startswith("image/"): textos_nuevos.append(procesar_imagen(archivo))
+            elif tipo.startswith("audio/") or tipo in ["audio/ogg", "audio/opus"]: textos_nuevos.append(procesar_audio(archivo))
+            elif tipo == "application/pdf": textos_nuevos.append(procesar_pdf(archivo))
         
         if textos_nuevos:
             texto_unido = "\n\n".join(textos_nuevos)
             agregar_texto(texto_unido)
-            st.success("¡Archivos procesados y agregados al texto!")
+            st.success("¡Archivos procesados!")
 
 # ==========================================
 # REVISIÓN Y ENVÍO (Con Deshacer)
@@ -149,7 +174,7 @@ if st.session_state.texto_acumulado.strip():
             st.session_state.texto_acumulado = st.session_state.historial.pop()
             st.rerun()
 
-    st.write("Si hay un error en alguna letra, toca el cuadro blanco y corrígelo con tu teclado.")
+    st.write("Si hay un error, toca el cuadro blanco y corrígelo con tu teclado.")
     
     texto_final = st.text_area("Mensaje listo:", value=st.session_state.texto_acumulado.strip(), height=300, key="editor_texto", on_change=guardar_edicion_manual)
     
