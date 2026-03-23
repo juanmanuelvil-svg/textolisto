@@ -8,9 +8,6 @@ from PIL import Image
 # ==========================================
 # CONFIGURACIÓN INICIAL
 # ==========================================
-# Pon el número de quien va a imprimir, con código 52, sin el símbolo +
-NUMERO_WHATSAPP = "525500000000" 
-
 # Conexión con Google Gemini
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
@@ -26,9 +23,10 @@ st.set_page_config(page_title="TextoListo", page_icon="📝", layout="centered")
 
 st.markdown("""
     <style>
-    .stButton>button { height: 80px; font-size: 24px !important; font-weight: bold; border-radius: 15px; }
-    .stTextArea textarea { font-size: 22px !important; line-height: 1.5; }
-    p, div, label { font-size: 20px !important; }
+    .stButton>button { height: 90px; font-size: 26px !important; font-weight: bold; border-radius: 18px; }
+    .stTextArea textarea { font-size: 24px !important; line-height: 1.6; }
+    p, div, label { font-size: 22px !important; }
+    h3 { font-size: 28px !important; margin-top: 25px !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -36,17 +34,25 @@ if "texto_acumulado" not in st.session_state:
     st.session_state.texto_acumulado = ""
 
 # ==========================================
-# FUNCIONES DE INTELIGENCIA ARTIFICIAL
+# FUNCIONES DE INTELIGENCIA ARTIFICIAL 
 # ==========================================
-def procesar_imagen(imagen):
-    img = Image.open(imagen)
+def procesar_imagen(imagen_file):
+    img = Image.open(imagen_file)
     prompt = "Extrae todo el texto de esta imagen de forma clara y limpia. Corrige ortografía. Devuelve SOLO el texto, sin saludos ni explicaciones."
-    return model.generate_content([prompt, img]).text
+    respuesta = model.generate_content([prompt, img])
+    return respuesta.text
 
-def procesar_audio(audio):
-    audio_data = {"mime_type": "audio/wav", "data": audio.getvalue()}
+def procesar_audio(audio_file):
+    audio_data = {"mime_type": audio_file.type, "data": audio_file.getvalue()}
     prompt = "Transcribe el siguiente audio. Quita muletillas y corrige la ortografía. Devuelve SOLO el texto, sin saludos ni explicaciones."
-    return model.generate_content([prompt, audio_data]).text
+    respuesta = model.generate_content([prompt, audio_data])
+    return respuesta.text
+
+def procesar_pdf(pdf_file):
+    pdf_data = {"mime_type": "application/pdf", "data": pdf_file.getvalue()}
+    prompt = "Lee todo este documento PDF. Extrae y resume el texto de forma clara, con viñetas si es necesario. Devuelve SOLO el texto, sin saludos ni explicaciones."
+    respuesta = model.generate_content([prompt, pdf_data])
+    return respuesta.text
 
 def generar_voz(texto):
     tts = gTTS(text=texto, lang='es', tld='com.mx')
@@ -58,50 +64,81 @@ def generar_voz(texto):
 # INTERFAZ PARA EL ADULTO MAYOR
 # ==========================================
 st.title("📝 TextoListo")
-st.write("Toma una foto de tu documento o graba un mensaje con tu voz para pasarlo a texto.")
+st.write("Convierte tus fotos, documentos PDF o notas de voz en texto limpio.")
 
-st.info("🔒 **Consejo:** No tomes fotos de tarjetas de crédito, contraseñas o datos del banco.")
+st.info("🔒 **Consejo:** No subas fotos ni dictes tarjetas de crédito, contraseñas o datos del banco.")
 
-# --- BOTONES PRINCIPALES ---
+st.divider()
+
+# --- SECCIÓN 1: TIEMPO REAL ---
+st.subheader("Opción A: Usa la cámara o micrófono ahora")
 col1, col2 = st.columns(2)
 
 with col1:
-    foto = st.camera_input("📷 Tomar Foto")
-    if foto:
+    foto_camara = st.camera_input("📷 Toca para tomar foto")
+    if foto_camara:
         with st.spinner("⏳ Leyendo la foto..."):
-            texto_nuevo = procesar_imagen(foto)
+            texto_nuevo = procesar_imagen(foto_camara)
             st.session_state.texto_acumulado += f"\n\n{texto_nuevo}"
             st.success("¡Foto leída!")
 
 with col2:
-    audio = st.audio_input("🎙️ Grabar Voz")
-    if audio:
+    audio_grabado = st.audio_input("🎙️ Toca para grabar voz")
+    if audio_grabado:
         with st.spinner("⏳ Escuchando tu mensaje..."):
-            texto_nuevo = procesar_audio(audio)
+            texto_nuevo = procesar_audio(audio_grabado)
             st.session_state.texto_acumulado += f"\n\n{texto_nuevo}"
             st.success("¡Mensaje escuchado!")
 
-# --- REVISIÓN Y ENVÍO ---
+st.divider()
+
+# --- SECCIÓN 2: SUBIR ARCHIVOS DE WHATSAPP O CORREO ---
+st.subheader("Opción B: Selecciona archivos de tu teléfono")
+st.write("Sube las fotos, PDF o notas de voz que te mandaron por WhatsApp o correo.")
+
+archivos_subidos = st.file_uploader(
+    "Toca aquí para buscar en tu teléfono:", 
+    type=['png', 'jpg', 'jpeg', 'pdf', 'mp3', 'wav', 'm4a', 'ogg', 'opus'],
+    accept_multiple_files=True 
+)
+
+if archivos_subidos and st.button("✅ PROCESAR ARCHIVOS SELECCIONADOS", type="secondary", use_container_width=True):
+    with st.spinner("⏳ Leyendo tus archivos..."):
+        for archivo in archivos_subidos:
+            tipo_mime = archivo.type
+            
+            if tipo_mime.startswith("image/"):
+                texto_nuevo = procesar_imagen(archivo)
+            elif tipo_mime.startswith("audio/") or tipo_mime in ["audio/ogg", "audio/opus"]:
+                texto_nuevo = procesar_audio(archivo)
+            elif tipo_mime == "application/pdf":
+                texto_nuevo = procesar_pdf(archivo)
+            else:
+                continue 
+                
+            st.session_state.texto_acumulado += f"\n\n{texto_nuevo}"
+        st.success("¡Archivos procesados!")
+
+# ==========================================
+# REVISIÓN Y ENVÍO
+# ==========================================
 if st.session_state.texto_acumulado.strip():
     st.divider()
-    st.subheader("👀 Revisa tu mensaje:")
-    st.write("Puedes tocar el cuadro blanco para corregir alguna palabra con el teclado si lo necesitas.")
+    st.subheader("👀 Paso 3: Revisa tu mensaje")
+    st.write("Si hay un error, toca el cuadro blanco y corrígelo con el teclado.")
     
-    # Cuadro donde el usuario puede editar el texto si la IA se equivocó
-    texto_final = st.text_area("Mensaje listo:", value=st.session_state.texto_acumulado.strip(), height=250)
+    texto_final = st.text_area("Mensaje listo:", value=st.session_state.texto_acumulado.strip(), height=300)
     
-    # Botón para que la app le lea el texto en voz alta
     if st.button("🔊 Escuchar en voz alta"):
         st.audio(generar_voz(texto_final), format='audio/mp3', autoplay=True)
 
     st.divider()
     
-    # Prepara el mensaje para WhatsApp
-    mensaje_whatsapp = urllib.parse.quote(f"Hola, por favor ayúdame a pasar este texto a Word e imprimirlo:\n\n{texto_final}")
-    enlace_whatsapp = f"https://wa.me/{NUMERO_WHATSAPP}?text={mensaje_whatsapp}"
+    # LA MEJORA APLICADA: Botón universal de WhatsApp
+    mensaje_wpp = urllib.parse.quote(f"Hola, por favor ayúdame a pasar este texto a un Word e imprimirlo:\n\n{texto_final}")
+    enlace_wpp = f"https://api.whatsapp.com/send?text={mensaje_wpp}"
     
-    # Botón final
-    st.link_button("✅ ENVIAR POR WHATSAPP", enlace_whatsapp, type="primary", use_container_width=True)
+    st.link_button("✅ ENVIAR POR WHATSAPP", enlace_wpp, type="primary", use_container_width=True)
 
     st.write("---")
     if st.button("🗑️ Borrar todo y empezar de cero"):
